@@ -140,7 +140,10 @@ static uint8_t protocol_version = 0; // see HID1_11.pdf sect 7.2.6
 static uint8_t LED_state = 0; // see HID1_11.pdf appendix B section 1
 static char report_pending = 0; // if we need to send out a report
 static int8_t bit_idx = 0; // bit index of current reception
+#define INDICATE_ERROR -10 // used for bit_idx to indicate error
 static volatile char has_commed = 0; // if the host made any usb requests
+static uint32_t ir_code = 0; // current IR code being received
+static uint32_t last_keycode = 0; // the last keycode, used for key holding
 #ifdef ENABLE_TIMEBUFF_DEBUG
 static uint8_t time_buff[32*3];
 static uint8_t time_buff_idx = 0;
@@ -325,9 +328,6 @@ int main()
 	}
 	LED_PORTx &= ~LED_PINMASK; // LED off
 
-	static uint32_t ir_code = 0; // current IR code being received
-	static uint32_t last_keycode = 0; // the last keycode, used for key holding
-	
 	while (1) // main loop, do forever
 	{
 		// perform usb related background tasks
@@ -380,13 +380,18 @@ int main()
 			if (bit_is_set(TIFR, TOV1)) TIFR |= _BV(TOV1);
 		}
 
-		if (TCNT1 >= TMR1_TIMEOUT_120MS || bit_is_set(TIFR, TOV1))
+		if (TCNT1 >= TMR1_TIMEOUT_120MS || bit_is_set(TIFR, TOV1) || r == IRCAP_ERROR)
 		{
+			last_keycode = 0; // too long for repeat signal, invalidate this to reject noise
+
 			if (report_pending != 4)
 			{
 				keyboard_report_reset();
 				report_pending = 3;
+				// this will send a blank keystroke only once
 			}
+
+			// prevent the timer from actually overflowing but also keeps the timed-out state
 			TCNT1 = TMR1_TIMEOUT_120MS;
 			if (bit_is_set(TIFR, TOV1)) TIFR |= _BV(TOV1);
 
@@ -469,14 +474,14 @@ ircap_res_t ir_cap(uint32_t* ir_code_ptr)
 			tmpTCNT0 = 255; // fake long pulse for next if-statement
 		}
 
-		if (tmpTCNT0 >= PULSEWIDTH_INITIAL_9MS)
+		if (tmpTCNT0 >= PULSEWIDTH_INITIAL_9MS && tmpTCNT0 <= (PULSEWIDTH_INITIAL_9MS + PULSEWIDTH_2MS))
 		{
 			bit_idx = -2; // reset bit index since it is the initial pulse
 			#ifdef ENABLE_TIMEBUFF_DEBUG
 			time_buff_idx = 0;
 			#endif
 		}
-		else if (tmpTCNT0 >= PULSEWIDTH_ON_MIN)
+		else if (tmpTCNT0 >= PULSEWIDTH_ON_MIN && tmpTCNT0 <= (PULSEWIDTH_INITIAL_9MS / 8))
 		{
 			bit_idx++; // this becomes 0 if it was -1 before (when the off pulse is valid)
 		}
@@ -485,7 +490,7 @@ ircap_res_t ir_cap(uint32_t* ir_code_ptr)
 			#ifdef ENABLE_UNKNOWN_DEBUG
 			printf_P(PSTR(" e1 %d %d "), bit_idx, tmpTCNT0);
 			#endif
-			bit_idx = -3; // indicate error;
+			bit_idx = INDICATE_ERROR;
 		}
 
 		#ifdef ENABLE_TIMEBUFF_DEBUG
@@ -526,26 +531,35 @@ ircap_res_t ir_cap(uint32_t* ir_code_ptr)
 			// new command
 			res = IRCAP_NEWKEY;
 		}
-		else if (tmpTCNT0 >= PULSEWIDTH_3MS && bit_idx == 0)
+		else if (bit_idx == -2 && tmpTCNT0 >= PULSEWIDTH_2MS && tmpTCNT0 <= PULSEWIDTH_3MS)
+		{
+			bit_idx = -5; // signal that repeat key is possible
+		}
+		else if (tmpTCNT0 >= PULSEWIDTH_3MS && bit_idx == -4)
 		{
 			// repeated command
 			res = IRCAP_REPEATKEY;
+			bit_idx++;
 		}
-		else if (bit_idx == -2 && tmpTCNT0 >= PULSEWIDTH_2MS && tmpTCNT0 <= PULSEWIDTH_5MS)
+		else if (bit_idx == -2 && tmpTCNT0 >= PULSEWIDTH_4MS && tmpTCNT0 <= PULSEWIDTH_5MS)
 		{
 			// this is the 4.5ms off time after the 9ms on time
 			bit_idx = -1;
+			last_keycode = 0;
 		}
 		else
 		{
 			#ifdef ENABLE_UNKNOWN_DEBUG
 			printf_P(PSTR(" e2 %d %d "), bit_idx, tmpTCNT0);
 			#endif
-			bit_idx = -3; // indicate error;
+			bit_idx = INDICATE_ERROR;
 		}
 	}
 
-	if (bit_idx <= -3) return IRCAP_ERROR;
+	if (bit_idx <= INDICATE_ERROR) {
+		last_keycode = 0;
+		return IRCAP_ERROR;
+	}
 
 	return res;
 }
@@ -640,6 +654,7 @@ void usbPollWrapper()
 		usbSetInterrupt((uint8_t*)(&keyboard_report), s);
 
 		if (report_pending == 3) {
+			// only once
 			report_pending = 4;
 		}
 		else {

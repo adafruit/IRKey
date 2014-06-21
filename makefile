@@ -29,7 +29,9 @@ COMMON = -mmcu=$(MCU)
 ## Flags common to C only
 CFLAGS = $(COMMON)
 CONLYFLAGS = -std=gnu99
-CFLAGS += -Wall -gdwarf-2 -DF_CPU=16500000UL $(USER_ENABLED_OPTIONS) -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -ffunction-sections -fdata-sections
+CFLAGS += -Wall -gdwarf-2 -DF_CPU=16500000UL
+CFLAGS += $(USER_ENABLED_OPTIONS)
+CFLAGS += -Os -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums -ffunction-sections -fdata-sections
 CFLAGS += -MD -MP -MT $(*F).o
 
 ## Flags common to ASM only
@@ -56,7 +58,7 @@ HEX_EEPROM_FLAGS += --set-section-flags=.eeprom="alloc,load"
 HEX_EEPROM_FLAGS += --change-section-lma .eeprom=0 --no-change-warnings
 
 ## Include Directories
-INCLUDES = -I"."
+INCLUDES = -I'.'
 
 ## Libraries
 LIBS = -lm -lc
@@ -72,16 +74,16 @@ LINKONLYOBJECTS =
 all: $(TARGET)
 
 main.o: ./main.c
-	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c  $<
+	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c $<
 
 usr_prog.o: ./usr_prog.c
-	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c  $<
+	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c $<
 
 usbdrv.o: ./usbdrv/usbdrv.c
-	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c  $<
+	 $(CC) $(INCLUDES) $(CFLAGS) $(CONLYFLAGS) -c $<
 
 usbdrvasm.o: ./usbdrv/usbdrvasm.S
-	 $(CC) $(INCLUDES) $(ASMFLAGS) -c  $<
+	 $(CC) $(INCLUDES) $(ASMFLAGS) -c $<
 
 
 
